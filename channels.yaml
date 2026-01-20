@@ -1,0 +1,28 @@
+version: 1
+time_field: timestamp
+
+channels:
+  - name: event_4769_global
+    filter: "event_id == 4769"
+    group_by: []
+    measure: "count"
+
+  - name: event_4769_by_user
+    filter: "event_id == 4769"
+    group_by: ["user"]
+    measure: "count"
+    top_k: 200
+    min_events: 10
+
+  - name: event_4769_by_src_ip
+    filter: "event_id == 4769"
+    group_by: ["src_ip"]
+    measure: "count"
+    top_k: 200
+    min_events: 10
+
+  - name: event_4769_fail_global
+    filter: "event_id == 4769 and status != '0x0'"
+    group_by: []
+    measure: "count"
+
