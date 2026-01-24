@@ -2,24 +2,23 @@
 """
 signals.py — minimal, practical "signal builder + baseline/scoring" CLI
 
-Works on a generic event-table CSV like dc_security.csv.
+Works on a generic event-table CSV like events.csv.
 Outputs long-form signals, and can run EWMA + rolling MAD scoring (+ optional CUSUM).
 
 Install deps:
   pip install pandas pyyaml pyarrow python-dateutil
 
 Examples:
-  python signals.py build  --input dc_security.csv --channels channels.yaml --hop 1m --window 5m --out signals.parquet
+  python signals.py build  --input events.csv --channels channels.yaml --hop 1m --window 5m --out signals.parquet
   python signals.py detect --input signals.parquet --alpha 0.05 --score-window 240 --threshold 6 --cusum --out anomalies.parquet
 """
 
 from __future__ import annotations
 
 import argparse
-import math
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import yaml
@@ -46,17 +45,6 @@ def parse_duration_to_timedelta(s: str) -> pd.Timedelta:
     if unit == "d":
         return pd.Timedelta(days=n)
     raise ValueError(f"Unsupported duration unit in '{s}'.")
-
-
-def normalize_ip(ip: Any) -> Any:
-    """Normalize IPv4-mapped IPv6 like '::ffff:10.0.1.15' -> '10.0.1.15'."""
-    if not isinstance(ip, str):
-        return ip
-    ip = ip.strip()
-    if ip.startswith("::ffff:"):
-        return ip[len("::ffff:") :]
-    return ip
-
 
 def safe_series_key(group_by: List[str], row: pd.Series) -> str:
     if not group_by:
@@ -133,10 +121,6 @@ def build_signals_longform(
     df = events.copy()
     df[time_col] = pd.to_datetime(df[time_col], utc=True, errors="coerce")
     df = df.dropna(subset=[time_col]).sort_values(time_col)
-
-    # helpful normalizations (safe even if columns absent)
-    if "src_ip" in df.columns:
-        df["src_ip"] = df["src_ip"].map(normalize_ip)
 
     out_rows: List[Dict[str, Any]] = []
 
@@ -384,7 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pb = sub.add_parser("build", help="Build long-form signals from an event-table CSV")
-    pb.add_argument("--input", required=True, help="Input event table (CSV) e.g. dc_security.csv")
+    pb.add_argument("--input", required=True, help="Input event table (CSV) e.g. events.csv")
     pb.add_argument("--channels", required=True, help="YAML channel pack")
     pb.add_argument("--hop", required=True, help="Evaluation step, e.g. 1m")
     pb.add_argument("--window", required=True, help="Lookback window, e.g. 5m")

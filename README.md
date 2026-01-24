@@ -1,61 +1,93 @@
-# Signals
+# signals
 
-A small command-line tool for building hop-based time-series signals from event data and running baseline-driven anomaly detection.
+This repository contains a small Python-based signal analysis engine.
 
-This project is intentionally minimal and exploratory, focusing on signal construction, baselining, and scoring rather than end-to-end ingestion or alerting.
-
----
-
-## Example workflow
-
-The commands below reproduce the example data files used in the included notebook screenshot.
-
-### Data source
-
-The raw data originates from Splunk's public attack dataset:
-
-https://github.com/splunk/attack_data/tree/master/datasets/attack_techniques/T1558.003/unusual_number_of_kerberos_service_tickets_requested
-
-The file `windows-xml.log` was parsed into a normalized event stream named `dc_security.csv`, which is used as input here. The parsing step is outside the scope of this repository; the focus is on signal analysis once events are tabular.
+It provides utilities for converting event-style data into time-series signals, applying simple baselines, and computing derived values such as residuals and scores.
 
 ---
 
-### Build signals
+## Overview
 
-Generate hop-based time series from the event stream:
+The core workflow supported by this project is:
 
-```bash
-python signals.py build --input dc_security.csv --channels channels.yaml --hop 1m --window 5m --out signals.parquet
+1. Take an input table of timestamped events
+2. Aggregate events into fixed time bins to produce one or more time series
+3. Apply baseline estimators to each series
+4. Compute residuals and simple scoring metrics
+
+Configuration is primarily driven by YAML files that describe how channels are constructed.
+
+---
+
+## Repository layout
+
+```
+.
+├── LICENSE
+├── README.md
+├── channels.yaml
+├── main.py
+├── signals.py
+├── pyproject.toml
+├── uv.lock
+├── signal_analysis_example.png
+└── examples/
+    └── kerberos/
+        ├── README.md
+        ├── channels.yaml
+        ├── dc_security.csv
+        ├── dc_4769.parquet
+        ├── analyzed.parquet
+        ├── alerts.parquet
+        ├── parse_windows_eventlog_xml.py
+        ├── signal_analysis_demo.ipynb
+        ├── windows-xml.log
+        └── scratch/
+            ├── dc_4769.csv
+            └── signal_analysis_example.ipynb
 ```
 
-This produces `signals.parquet`, containing one or more time-indexed channels representing x(t).
+---
+
+## channels.yaml (repository root)
+
+The `channels.yaml` file at the repository root contains generic examples of channel definitions.
+
+It is intended to:
+
+- Illustrate the expected structure of channel configuration
+- Document available fields and common patterns
+- Serve as a starting point for new configurations
+
+It is not automatically applied to the example analyses.
+
+Example-specific channel definitions live alongside their corresponding data under `examples/`.
 
 ---
 
-### Detect anomalies
+## Examples
 
-Run baseline estimation and anomaly scoring:
+The `examples/` directory contains self-contained analyses that use the core engine.
 
-```bash
-python signals.py detect --input signals.parquet --alpha 0.05 --score-window 240 --threshold 6 --cusum --out analyzed.parquet
-```
+Each example directory includes:
 
-The output file (`analyzed.parquet`) includes the baseline, residual, score, and optional CUSUM state for each channel.
+- Its own `channels.yaml`
+- Input data files
+- Optional notebooks and intermediate outputs
+- A README describing how the example was produced
+
+See `examples/kerberos/README.md` for details on the Kerberos example.
 
 ---
 
-## Example output
+## Status
 
-Below is a screenshot from `signal_analysis_example.ipynb`, showing a single channel with its raw values, baseline, residual, score, and CUSUM output.
+This project is under active development.
 
-![Signal analysis example](signal_analysis_example.png)
+Interfaces, configuration formats, and file layout may change as the code evolves.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License.
-
-You are free to use, modify, and distribute this code, including for commercial purposes, provided that the original copyright notice and license text are included.
-
-See the `LICENSE` file for full details.
+MIT License. See `LICENSE` for details.

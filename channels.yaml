@@ -1,28 +1,84 @@
-version: 1
-time_field: timestamp
+# channels.yaml
+#
+# This file defines *channel specifications* for converting raw event tables
+# into time-series signals.
+#
+# This root-level file is intentionally minimal and generic.
+# It serves as:
+#   - Documentation of the channel configuration format
+#   - A starting point for new projects
+#   - A schema-like contract for what the engine expects
+#
+# Real projects will usually:
+#   - Replace this file entirely, or
+#   - Override it with a domain-specific channels.yaml elsewhere
+#
+# Nothing in this file is meant to imply *why* a signal matters.
+# It only demonstrates *how* signals may be defined.
+#
+# ---------------------------------------------------------------------------
 
 channels:
-  - name: event_4769_global
-    filter: "event_id == 4769"
-    group_by: []
-    measure: "count"
 
-  - name: event_4769_by_user
-    filter: "event_id == 4769"
-    group_by: ["user"]
-    measure: "count"
-    top_k: 200
-    min_events: 10
+  # -------------------------------------------------------------------------
+  # Example 1: Simple event count per time bin
+  #
+  # Counts how many events occur in each time window.
+  # This is the most basic possible channel.
+  # -------------------------------------------------------------------------
+  - name: event_count
+    description: Count of events per time bin
+    source:
+      table: events            # logical input table name
+      timestamp: ts             # timestamp column
+    bin:
+      size: 1h                  # bin width (e.g. 1m, 5m, 1h, 1d)
+      hop: 1h                   # hop size (usually equals bin size)
+    aggregation:
+      type: count               # count | sum | mean | min | max | custom
 
-  - name: event_4769_by_src_ip
-    filter: "event_id == 4769"
-    group_by: ["src_ip"]
-    measure: "count"
-    top_k: 200
-    min_events: 10
+  # -------------------------------------------------------------------------
+  # Example 2: Mean of a numeric field per time bin
+  #
+  # Aggregates a numeric value over time.
+  # -------------------------------------------------------------------------
+  - name: mean_value
+    description: Mean of a numeric field per time bin
+    source:
+      table: events
+      timestamp: ts
+      value: value              # numeric column to aggregate
+    bin:
+      size: 5m
+      hop: 5m
+    aggregation:
+      type: mean
 
-  - name: event_4769_fail_global
-    filter: "event_id == 4769 and status != '0x0'"
-    group_by: []
-    measure: "count"
+  # -------------------------------------------------------------------------
+  # Example 3: Grouped channels (per-entity series)
+  #
+  # Produces one time series per unique key value.
+  # -------------------------------------------------------------------------
+  - name: event_count_by_key
+    description: Event count per key per time bin
+    source:
+      table: events
+      timestamp: ts
+      group_by: key             # column used to split into multiple series
+    bin:
+      size: 1h
+      hop: 1h
+    aggregation:
+      type: count
 
+# ---------------------------------------------------------------------------
+# Notes
+#
+# - Channel names must be unique.
+# - Time bins define how raw events are converted into x(t).
+# - Aggregation determines how values are combined inside each bin.
+# - Grouped channels create multiple series under one logical channel.
+#
+# Downstream processing (baselines, residuals, scoring, alerting, etc.)
+# is configured elsewhere and is intentionally not described here.
+# ---------------------------------------------------------------------------

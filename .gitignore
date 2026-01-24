@@ -33,3 +33,9 @@ wheels/
 # OS / editor noise
 # ------------------------------
 .DS_Store
+
+# ------------------------------
+# Could be scrapped
+# ------------------------------
+examples/**/scratch/
+
