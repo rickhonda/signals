@@ -30,8 +30,3 @@ channels:
     filter: "event_id == 4769 and status != '0x0'"
     group_by: []
     measure: "count"
-
-  - name: ratio_4769_over_4768_global
-    type: ratio
-    numerator: event_4769_global
-    denominator: event_4768_global

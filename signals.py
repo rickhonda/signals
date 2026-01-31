@@ -143,10 +143,24 @@ def build_signals_longform(
             raise ValueError(f"v1 supports only measure=count. Got {spec.measure} in {spec.name}")
 
         # Filter
-        try:
-            sdf = df.query(spec.filter_expr, engine="python")
-        except Exception as e:
-            raise ValueError(f"Bad filter in channel '{spec.name}': {spec.filter_expr}\n{e}")
+
+# ---\        
+        # Normalize "no-op" filters so channel specs can say True / empty and mean "all rows"
+        fexpr = spec.filter_expr
+        if fexpr is None:
+            sdf = df
+        else:
+            fexpr_str = str(fexpr).strip()
+            if fexpr_str == "" or fexpr_str.lower() in ("true", "1", "all", "*"):
+                sdf = df
+            else:
+                try:
+                    sdf = df.query(fexpr_str, engine="python")
+                except Exception as e:
+                    raise ValueError(
+                        f"Bad filter in channel '{spec.name}': {spec.filter_expr}\n{e}"
+                    )
+# ---/
 
         if sdf.empty:
             continue
@@ -219,6 +233,101 @@ def build_signals_longform(
 
 
 # ----------------------------
+# Explicit seams (core API)
+# ----------------------------
+
+def load_event_stream(path: str) -> pd.DataFrame:
+    """Load an event stream table from CSV or Parquet."""
+    if path.endswith(".csv"):
+        return pd.read_csv(path)
+    return pd.read_parquet(path)
+
+
+def load_signals_table(path: str) -> pd.DataFrame:
+    """Load a signals long-form table (ts, channel, series_key, value) from CSV or Parquet."""
+    if path.endswith(".csv"):
+        return pd.read_csv(path)
+    return pd.read_parquet(path)
+
+
+def signalize_events(
+    events: pd.DataFrame,
+    *,
+    channels_path: str,
+    hop: pd.Timedelta,
+    window: pd.Timedelta,
+) -> pd.DataFrame:
+    """
+    Seam: EventFrame -> SignalFrame (long-form)
+    Returns columns: ts, channel, series_key, value
+    """
+    time_field, channels = load_channels_yaml(channels_path)
+    return build_signals_longform(
+        events=events,
+        time_col=time_field,
+        channels=channels,
+        hop=hop,
+        window=window,
+    )
+
+
+def run_pipeline_on_series(
+    x: pd.Series,
+    *,
+    alpha: float,
+    score_window: int,
+    mad_floor: float = 1.0,
+    eps: float = 1e-9,
+    use_cusum: bool = False,
+    cusum_k: float = 0.0,
+) -> pd.DataFrame:
+    """
+    Seam: x(t) Series -> per-point analytics
+
+    Returns a DataFrame with:
+      baseline, residual, score, cusum (cusum is NaN if disabled)
+    """
+    x = x.astype(float)
+    baseline = ewma_baseline(x, alpha=alpha)
+    residual = x - baseline
+    score = rolling_mad_zscore(residual, window=int(score_window), eps=eps, mad_floor=mad_floor)
+
+    out = pd.DataFrame(
+        {
+            "baseline": baseline,
+            "residual": residual,
+            "score": score,
+        },
+        index=x.index,
+    )
+
+    if use_cusum:
+        out["cusum"] = cusum_pos(out["score"], k=float(cusum_k))
+    else:
+        out["cusum"] = float("nan")
+
+    return out
+
+
+def apply_threshold(
+    *,
+    score: pd.Series,
+    threshold: float,
+    cusum: pd.Series | None = None,
+) -> pd.Series:
+    """
+    Seam: scores -> decision mask (policy layer)
+    If cusum is provided, alert if |score| >= threshold OR cusum >= threshold.
+    """
+    base = score.abs() >= float(threshold)
+    if cusum is None:
+        return base
+    return base | (cusum >= float(threshold))
+
+# ----------------------------
+# ----------------------------
+
+# ----------------------------
 # Detection: EWMA baseline + rolling MAD score + optional CUSUM
 # ----------------------------
 
@@ -252,6 +361,8 @@ def cusum_pos(z: pd.Series, k: float = 0.0) -> pd.Series:
         s.append(acc)
     return pd.Series(s, index=z.index, dtype="float64")
 
+# ----------------------------
+# ---------------------------- 
 
 def detect_on_signals(
     signals: pd.DataFrame,
@@ -260,7 +371,11 @@ def detect_on_signals(
     threshold: float,
     use_cusum: bool,
     cusum_k: float,
+    mad_floor: float = 1.0,
 ) -> pd.DataFrame:
+    """
+    Seam-friendly wrapper: SignalFrame (long) -> ScoredFrame (long)
+    """
     if signals.empty:
         return pd.DataFrame()
 
@@ -276,48 +391,57 @@ def detect_on_signals(
     out_parts = []
     for (ch, key), g in df.groupby(["channel", "series_key"], sort=False):
         x = g["value"].astype(float)
-        base = ewma_baseline(x, alpha=alpha)
-        resid = x - base
-        z = rolling_mad_zscore(resid, window=score_window)
+
+        pipe = run_pipeline_on_series(
+            x,
+            alpha=float(alpha),
+            score_window=int(score_window),
+            mad_floor=float(mad_floor),
+            use_cusum=bool(use_cusum),
+            cusum_k=float(cusum_k),
+        )
 
         part = g.copy()
-        part["baseline"] = base
-        part["residual"] = resid
-        part["score"] = z
+        part["baseline"] = pipe["baseline"].to_numpy()
+        part["residual"] = pipe["residual"].to_numpy()
+        part["score"] = pipe["score"].to_numpy()
+        part["cusum"] = pipe["cusum"].to_numpy()
 
         if use_cusum:
-            part["cusum"] = cusum_pos(part["score"], k=cusum_k)
-            part["is_alert"] = (part["score"].abs() >= threshold) | (part["cusum"] >= threshold)
+            part["is_alert"] = apply_threshold(
+                score=part["score"],
+                cusum=part["cusum"],
+                threshold=float(threshold),
+            )
         else:
-            part["cusum"] = float("nan")
-            part["is_alert"] = (part["score"].abs() >= threshold)
+            part["is_alert"] = apply_threshold(
+                score=part["score"],
+                cusum=None,
+                threshold=float(threshold),
+            )
 
         out_parts.append(part)
 
-    out = pd.concat(out_parts, ignore_index=True)
-    return out
+    return pd.concat(out_parts, ignore_index=True)
 
+# ---------------------------
+# --------------------------/
 
 # ----------------------------
 # CLI
 # ----------------------------
 
+# ---\
+
 def cmd_build(args: argparse.Namespace) -> int:
     hop = parse_duration_to_timedelta(args.hop)
     window = parse_duration_to_timedelta(args.window)
 
-    time_field, channels = load_channels_yaml(args.channels)
+    events = load_event_stream(args.input)
 
-    # Read events
-    events = pd.read_csv(args.input)
-    # Ensure expected columns exist (but keep generic)
-    if time_field not in events.columns:
-        raise SystemExit(f"Time field '{time_field}' not found in {args.input} columns: {list(events.columns)}")
-
-    signals = build_signals_longform(
-        events=events,
-        time_col=time_field,
-        channels=channels,
+    signals = signalize_events(
+        events,
+        channels_path=args.channels,
         hop=hop,
         window=window,
     )
@@ -326,15 +450,16 @@ def cmd_build(args: argparse.Namespace) -> int:
         signals.to_csv(args.out, index=False)
     else:
         signals.to_parquet(args.out, index=False)
+
     print(f"Wrote {len(signals):,} signal rows to {args.out}")
     return 0
 
+# ---/
+
+# ---\
 
 def cmd_detect(args: argparse.Namespace) -> int:
-    if args.input.endswith(".csv"):
-        signals = pd.read_csv(args.input)
-    else:
-        signals = pd.read_parquet(args.input)
+    signals = load_signals_table(args.input)
 
     out = detect_on_signals(
         signals=signals,
@@ -350,18 +475,19 @@ def cmd_detect(args: argparse.Namespace) -> int:
     else:
         out.to_parquet(args.out, index=False)
 
-    # Also write a small "alerts-only" file if requested
     if args.alerts_out:
         alerts = out[out["is_alert"] == True].copy()
         if args.alerts_out.endswith(".csv"):
             alerts.to_csv(args.alerts_out, index=False)
         else:
             alerts.to_parquet(args.alerts_out, index=False)
-        print(f"Wrote {len(alerts):,} alert rows to {args.alerts_out}")
 
-    print(f"Wrote {len(out):,} analyzed rows to {args.out}")
+    print(f"Wrote {len(out):,} scored rows to {args.out}")
+    if args.alerts_out:
+        print(f"Wrote {len(alerts):,} alerts to {args.alerts_out}")
     return 0
 
+# ---/
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="signals", description="Generic signal builder + baseline/scoring CLI (v1)")
