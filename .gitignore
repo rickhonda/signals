@@ -39,3 +39,4 @@ wheels/
 # ------------------------------
 examples/**/scratch/
 examples/**/k-test/
+scraps/
