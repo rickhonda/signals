@@ -122,4 +122,10 @@ The emphasis is on:
 - Robust, interpretable baselines and scores
 - Rapid tuning and experimentation
 
-Planned extensions include multi
+The goal is to provide a small, understandable core that can be used for analysis, research, and experimentation without hiding behavior behind complex abstractions.
+
+---
+
+## License
+
+This project is released under the MIT License. See the `LICENSE` file for details.
