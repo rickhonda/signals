@@ -38,4 +38,4 @@ wheels/
 # Could be scrapped
 # ------------------------------
 examples/**/scratch/
-
+examples/**/k-test/
