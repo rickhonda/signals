@@ -40,3 +40,10 @@ wheels/
 examples/**/scratch/
 examples/**/k-test/
 scraps/
+# Local / experimental datasets
+examples/geomagnetic/
+
+# Local backups / scratch
+apps/*.bak
+scraps/
+tools/
